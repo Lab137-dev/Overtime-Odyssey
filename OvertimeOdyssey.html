@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Overtime Odyssey — Shoes Spruce</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #0e1117;
+      color: #fff;
+      font-family: 'Arial', sans-serif;
+      touch-action: none;
+    }
+    canvas {
+      display: block;
+      margin: 0 auto;
+      background: #111;
+      border-radius: 8px;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+    }
+    #hud {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      display: flex;
+      justify-content: space-between;
+      font-weight: 700;
+      font-size: 18px;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+      z-index: 10;
+    }
+    #hud .profit { color: #62e075; }
+    #hud .pay { color: #9fb0cf; }
+    #msg {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      background: rgba(0, 0, 0, 0.7);
+      font-size: 24px;
+      line-height: 1.5;
+      z-index: 20;
+      transition: opacity 0.3s;
+    }
+    #msg h1 {
+      font-size: 36px;
+      margin: 0 0 10px;
+    }
+    #msg button {
+      padding: 10px 20px;
+      font-size: 18px;
+      background: #62e075;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    #msg button:hover {
+      background: #4cc75f;
+    }
+    #controls {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 15px;
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      z-index: 10;
+    }
+    .btn {
+      width: 70px;
+      height: 70px;
+      border-radius: 50%;
+      background: #1e2533;
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-size: 24px;
+      font-weight: 800;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+      user-select: none;
+      touch-action: none;
+      transition: transform 0.1s;
+    }
+    .btn:active {
+      transform: scale(0.95);
+    }
+    #highContrast {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      padding: 8px 16px;
+      background: #333;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .high-contrast .btn { background: #444; }
+    .high-contrast canvas { filter: contrast(1.5); }
+    .high-contrast #hud { text-shadow: 0 0 4px #000; }
+    @media (min-width: 900px) { #controls { display: none; } }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="960" height="540"></canvas>
+  <div id="hud">
+    <div>Dept: <b>Shoes</b> — Lives: <span id="lives">3</span></div>
+    <div class="profit">Corporate Profit: $<span id="profit">0</span></div>
+    <div class="pay">Employee Pay: $0.00</div>
+  </div>
+  <div id="msg">
+    <h1>Overtime Odyssey</h1>
+    <p>Press <b>1</b> for <b>Alex</b> or <b>2</b> for <b>Riley-L</b><br>
+    <small>(PC: Arrows/WASD move, Space jump, Z/X shoot • Mobile: buttons)</small></p>
+    <button id="retry" style="display: none;">Retry</button>
+  </div>
+  <div id="controls">
+    <div class="btn" id="btnLeft">◄</div>
+    <div class="btn" id="btnRight">►</div>
+    <div class="btn" id="btnJump">↑</div>
+    <div class="btn" id="btnShoot">●</div>
+  </div>
+  <button id="highContrast">High Contrast</button>
+  <script>
+(() => {
+  const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
+  const profitEl = document.getElementById('profit'), livesEl = document.getElementById('lives'), msgEl = document.getElementById('msg');
+  const retryBtn = document.getElementById('retry'), highContrastBtn = document.getElementById('highContrast');
+  let keys = new Set(), touch = { left: 0, right: 0, jump: 0, shoot: 0 };
+  let highContrast = false;
+
+  // Audio setup
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  function playSound(freq, type = 'sine', duration = 0.1, volume = 0.3) {
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.currentTime ? audioCtx.destination : audioCtx.destination);
+    oscillator.start();
+    oscillator.stop(audioCtx.currentTime + duration);
+  }
+  function playBackgroundMusic() {
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    oscillator.type = 'triangle';
+    oscillator.frequency.setValueAtTime(110, audioCtx.currentTime);
+    gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.currentTime ? audioCtx.destination : audioCtx.destination);
+    oscillator.start();
+  }
+
+  // Input handling
+  addEventListener('keydown', e => {
+    if (['ArrowLeft', 'a', 'A'].includes(e.key)) keys.add('left');
+    if (['ArrowRight', 'd', 'D'].includes(e.key)) keys.add('right');
+    if (['ArrowUp', 'w', 'W', ' '].includes(e.key)) keys.add('jump');
+    if (['z', 'x', 'Enter'].includes(e.key)) keys.add('shoot');
+    if (e.key === 'Escape' && running) { paused = !paused; if (!paused) resumeTimer = 60; }
+    if (!running && (e.key === '1' || e.key === '2')) startGame(e.key === '1' ? 'Alex' : 'Riley-L');
+  });
+  addEventListener('keyup', e => {
+    if (['ArrowLeft', 'a', 'A'].includes(e.key)) keys.delete('left');
+    if (['ArrowRight', 'd', 'D'].includes(e.key)) keys.delete('right');
+    if (['ArrowUp', 'w', 'W', ' '].includes(e.key)) keys.delete('jump');
+    if (['z', 'x', 'Enter'].includes(e.key)) keys.delete('shoot');
+  });
+  function bindBtn(id, n) {
+    const el = document.getElementById(id);
+    el.addEventListener('pointerdown', e => { e.preventDefault(); touch[n] = 1; });
+    ['pointerup', 'pointercancel', 'pointerleave', 'pointerout'].forEach(t => el.addEventListener(t, () => touch[n] = 0));
+  }
+  ['btnLeft', 'btnRight', 'btnJump', 'btnShoot'].forEach((id, i) => bindBtn(id, ['left', 'right', 'jump', 'shoot'][i]));
+  const input = {
+    get left() { return keys.has('left') || touch.left; },
+    get right() { return keys.has('right') || touch.right; },
+    get jump() { return keys.has('jump') || touch.jump; },
+    get shoot() { return keys.has('shoot') || touch.shoot; }
+  };
+  highContrastBtn.addEventListener('click', () => {
+    highContrast = !highContrast;
+    document.body.classList.toggle('high-contrast', highContrast);
+  });
+
+  // Utility functions
+  function rectsOverlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+  function clamp(v, min, max) {
+    return v < min ? min : v > max ? max : v;
+  }
+  let shake = 0;
+  function addShake(n) { shake = Math.max(shake, n); }
+
+  // Game objects
+  class Player {
+    constructor(who) {
+      this.who = who;
+      this.color = who === 'Alex' ? '#ffa447' : '#f07ad9';
+      this.x = 64;
+      this.y = 420;
+      this.w = 26;
+      this.h = 32;
+      this.vx = 0;
+      this.vy = 0;
+      this.dir = 1;
+      this.onGround = false;
+      this.cool = 0;
+      this.inv = 0;
+      this.speed = who === 'Riley-L' ? 2.8 : 2.4;
+      this.lives = 3;
+      this.coyote = 0;
+      this.jumpBuf = 0;
+      this.combo = 0;
+    }
+    update(dt) {
+      this.vx = 0;
+      if (input.left) { this.vx = -this.speed; this.dir = -1; }
+      if (input.right) { this.vx = this.speed; this.dir = 1; }
+      if (input.jump) this.jumpBuf = 8; else this.jumpBuf--;
+      if (this.onGround) this.coyote = 6; else this.coyote--;
+      if (this.jumpBuf > 0 && this.coyote > 0) {
+        this.vy = -7; this.onGround = false; this.jumpBuf = 0; this.coyote = 0;
+        playSound(440, 'square', 0.2, 0.2);
+      }
+      this.vy += 0.3;
+      if (!input.jump && this.vy < -2.5) this.vy = -2.5;
+      this.x += this.vx * dt * 60;
+      this.y += this.vy * dt * 60;
+      this.onGround = false;
+      for (const p of platforms) {
+        if (rectsOverlap(this, p)) {
+          if (this.vy > 0 && this.y + this.h - this.vy * dt * 60 <= p.y + 2) {
+            this.y = p.y - this.h;
+            this.vy = 0;
+            this.onGround = true;
+          } else if (this.vy < 0 && this.y >= p.y + p.h - 2) {
+            this.y = p.y + p.h;
+            this.vy = 0;
+          }
+        }
+      }
+      if (this.y > 510) { this.y = 510; this.vy = 0; this.onGround = true; }
+      this.x = clamp(this.x, -10, 940);
+      if (this.cool > 0) this.cool--;
+      if (input.shoot && this.cool <= 0) {
+        shootRubberBand(this);
+        this.cool = this.who === 'Riley-L' ? 12 : 8;
+        playSound(880, 'triangle', 0.1, 0.2);
+      }
+      if (this.inv > 0) this.inv--;
+      for (const it of items) {
+        if (!it.dead && rectsOverlap(this, it)) {
+          it.dead = true;
+          popups.push({ x: it.x, y: it.y, text: it.kind === 'coffee' ? '+Speed' : 'Invincible!', t: 60 });
+          if (it.kind === 'coffee') speedTimer = 360;
+          if (it.kind === 'pizza') this.inv = 300;
+          profit += 5 + this.combo * 0.5;
+          this.combo++;
+          playSound(660, 'sine', 0.15, 0.3);
+        }
+      }
+      if (rectsOverlap(this, exitDoor)) {
+        showMsg("Shoes Complete!<br>Next: Home Goods");
+        running = false;
+      }
+    }
+    hit() {
+      if (this.inv > 0) return;
+      this.lives--;
+      livesEl.textContent = this.lives;
+      this.combo = 0;
+      playSound(220, 'sawtooth', 0.3, 0.4);
+      if (this.lives <= 0) {
+        showMsg("Burnout! Corporate thanks you.<br><button id='retry'>Retry</button>");
+        retryBtn.style.display = 'block';
+        retryBtn.onclick = () => startGame(this.who);
+        running = false;
+        return;
+      }
+      this.vy = -5;
+      this.inv = 150;
+      this.x = 64;
+      this.y = 420;
+      addShake(8);
+    }
+    draw() {
+      ctx.save();
+      if (this.inv > 0) ctx.globalAlpha = 0.5 + 0.5 * Math.sin(performance.now() / 100);
+      ctx.fillStyle = this.color;
+      ctx.beginPath();
+      ctx.roundRect(this.x, this.y, this.w, this.h, 4);
+      ctx.fill();
+      ctx.fillStyle = '#0008';
+      ctx.fillRect(this.x + (this.dir > 0 ? 18 : 2), this.y + 8, 4, 8);
+      ctx.fillStyle = '#0ff';
+      ctx.fillRect(this.x + (this.dir > 0 ? this.w : -4), this.y + 12, 4, 4);
+      ctx.restore();
+    }
+  }
+
+  class Platform {
+    constructor(x, y, w, h) { this.x = x; this.y = y; this.w = w; this.h = h; }
+    draw() {
+      ctx.fillStyle = highContrast ? '#555' : '#334266';
+      ctx.beginPath();
+      ctx.roundRect(this.x, this.y, this.w, this.h, 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+      ctx.fillRect(this.x, this.y, this.w, 4);
+    }
+  }
+
+  class Cart {
+    constructor(x, y) { this.x = x; this.y = y; this.w = 44; this.h = 18; this.vx = 1.8; this.stun = 0; }
+    update(dt) {
+      if (this.stun > 0) this.stun--; else this.x += this.vx * dt * 60;
+      if (this.x < 32 || this.x > 860) this.vx *= -1;
+      if (rectsOverlap(player, this)) player.hit();
+    }
+    draw() {
+      ctx.fillStyle = this.stun > 0 ? '#88f8' : '#a76d3a';
+      ctx.beginPath();
+      ctx.roundRect(this.x, this.y, this.w, this.h, 4);
+      ctx.fill();
+      if (this.stun > 0) {
+        ctx.fillStyle = '#ff0';
+        ctx.beginPath();
+        ctx.arc(this.x + this.w / 2, this.y - 8, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  class FallingBox {
+    constructor(x) { this.x = x; this.y = 120; this.w = 22; this.h = 18; this.vy = 0; this.cool = (Math.random() * 180) | 0; }
+    update(dt) {
+      if (this.cool > 0) { this.cool--; return; }
+      this.vy += 0.25;
+      this.y += this.vy * dt * 60;
+      if (this.y > 520) { this.y = 120; this.vy = 0; this.cool = 180; }
+      if (rectsOverlap(player, this)) player.hit();
+    }
+    draw() {
+      ctx.fillStyle = '#b5793d';
+      ctx.beginPath();
+      ctx.roundRect(this.x, this.y, this.w, this.h, 3);
+      ctx.fill();
+    }
+  }
+
+  class Shot {
+    constructor(x, y, vx, vy = 0) { this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.life = 70; }
+    update(dt) {
+      this.x += this.vx * dt * 60;
+      this.y += this.vy * dt * 60;
+      this.life--;
+    }
+    draw() {
+      ctx.fillStyle = '#0ef';
+      ctx.beginPath();
+      ctx.roundRect(this.x, this.y, 8, 3, 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.3;
+      ctx.fillRect(this.x - 6, this.y, 8, 3);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  class Item {
+    constructor(kind, x, y) { this.kind = kind; this.x = x; this.y = y; this.w = 16; this.h = 16; this.dead = false; }
+    draw() {
+      if (this.dead) return;
+      if (this.kind === 'coffee') {
+        ctx.fillStyle = '#c9a36b';
+        ctx.beginPath();
+        ctx.roundRect(this.x, this.y, 16, 16, 4);
+        ctx.fill();
+      } else if (this.kind === 'pizza') {
+        ctx.fillStyle = '#ffda63';
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y + 16);
+        ctx.lineTo(this.x + 16, this.y + 16);
+        ctx.lineTo(this.x + 8, this.y);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
+  const platforms = [
+    new Platform(0, 536, 960, 6), new Platform(40, 480, 160, 12), new Platform(240, 430, 120, 12),
+    new Platform(420, 380, 140, 12), new Platform(620, 330, 120, 12), new Platform(770, 300, 120, 12),
+    new Platform(140, 340, 100, 12), new Platform(300, 300, 90, 12), new Platform(520, 270, 90, 12),
+    new Platform(680, 240, 80, 12)
+  ];
+  let carts = [new Cart(70, 462)], fallers = [new FallingBox(450)];
+  let items = [new Item('coffee', 325, 284), new Item('pizza', 805, 284)];
+  const exitDoor = { x: 900, y: 264, w: 40, h: 48 };
+  let player, shots = [], profit = 0, running = false, paused = false, resumeTimer = 0, sparks = [], popups = [], speedTimer = 0, comboTimer = 0;
+
+  function shootRubberBand(p) {
+    const v = p.dir > 0 ? 5.5 : -5.5;
+    if (p.who === 'Riley-L') {
+      shots.push(new Shot(p.x + (p.dir > 0 ? p.w : 0), p.y + 14, v, -0.6));
+      shots.push(new Shot(p.x + (p.dir > 0 ? p.w : 0), p.y + 14, v, 0));
+      shots.push(new Shot(p.x + (p.dir > 0 ? p.w : 0), p.y + 14, v, 0.6));
+    } else {
+      shots.push(new Shot(p.x + (p.dir > 0 ? p.w : 0), p.y + 14, v));
+    }
+  }
+
+  function showMsg(t) {
+    msgEl.innerHTML = t;
+    msgEl.style.display = 'flex';
+  }
+
+  function hideMsg() {
+    msgEl.style.display = 'none';
+  }
+
+  function startGame(who) {
+    player = new Player(who);
+    livesEl.textContent = player.lives;
+    profit = 0;
+    profitEl.textContent = 0;
+    carts = [new Cart(70, 462)];
+    fallers = [new FallingBox(450)];
+    items = [new Item('coffee', 325, 284), new Item('pizza', 805, 284)];
+    shots = [];
+    sparks = [];
+    popups = [];
+    speedTimer = 0;
+    comboTimer = 0;
+    hideMsg();
+    running = true;
+    playBackgroundMusic();
+  }
+
+  let last = performance.now();
+  function tick(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    ctx.clearRect(0, 0, 960, 540);
+
+    // Background
+    const g = ctx.createLinearGradient(0, 0, 0, 540);
+    g.addColorStop(0, highContrast ? '#222' : '#0b1423');
+    g.addColorStop(1, highContrast ? '#333' : '#0e1117');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 960, 540);
+    for (let i = 0; i < 960; i += 160) {
+      ctx.fillStyle = highContrast ? '#444' : '#101a2d';
+      ctx.fillRect(i - ((now / 50) % 160), 90, 140, 6);
+    }
+
+    if (running && !paused) {
+      if (speedTimer > 0) {
+        speedTimer--;
+        player.speed = player.who === 'Riley-L' ? 3.4 : 3.0;
+      } else {
+        player.speed = player.who === 'Riley-L' ? 2.8 : 2.4;
+      }
+      if (comboTimer > 0) comboTimer--; else player.combo = 0;
+
+      player.update(dt);
+      carts.forEach(c => c.update(dt));
+      fallers.forEach(f => f.update(dt));
+      shots.forEach(s => s.update(dt));
+      shots = shots.filter(s => s.life > 0 && s.x > -50 && s.x < 1010 && s.y > -50 && s.y < 600);
+      for (const s of shots) {
+        for (const c of carts) {
+          if (rectsOverlap(s, c)) {
+            c.stun = 120;
+            s.life = 0;
+            profit += 1 + player.combo * 0.2;
+            player.combo++;
+            comboTimer = 120;
+            addShake(4);
+            sparks.push({ x: s.x, y: s.y, t: 15 });
+            playSound(550, 'square', 0.1, 0.2);
+          }
+        }
+      }
+      profit += 0.02 * dt * 60;
+      profitEl.textContent = Math.floor(profit);
+      if (now / 1000 > 20 && carts.length < 2) carts.push(new Cart(260, 412));
+      if (now / 1000 > 40 && fallers.length < 2) fallers.push(new FallingBox(710));
+      if (now / 1000 > 60 && carts.length < 3) carts.push(new Cart(500, 312));
+
+      // Draw world
+      ctx.save();
+      const sx = (Math.random() * 2 - 1) * shake, sy = (Math.random() * 2 - 1) * shake;
+      ctx.translate(sx, sy);
+      shake = Math.max(0, shake - 0.8);
+      platforms.forEach(p => p.draw());
+      items.forEach(i => i.draw());
+      carts.forEach(c => c.draw());
+      fallers.forEach(f => f.draw());
+      shots.forEach(s => s.draw());
+      player.draw();
+
+      // Exit door
+      ctx.save();
+      ctx.globalAlpha = 0.4 + 0.3 * Math.sin(now / 200);
+      ctx.fillStyle = highContrast ? '#6ff' : '#4cffc3';
+      ctx.beginPath();
+      ctx.roundRect(exitDoor.x - 8, exitDoor.y - 8, exitDoor.w + 16, exitDoor.h + 16, 6);
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = '#2a7';
+      ctx.beginPath();
+      ctx.roundRect(exitDoor.x, exitDoor.y, exitDoor.w, exitDoor.h, 4);
+      ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.fillRect(exitDoor.x + 8, exitDoor.y + 10, 24, 28);
+
+      // Effects
+      sparks = sparks.filter(p => --p.t > 0);
+      for (const p of sparks) {
+        ctx.globalAlpha = p.t / 15;
+        ctx.fillStyle = '#9ff';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      popups = popups.filter(p => --p.t > 0);
+      ctx.fillStyle = '#9fb0cf';
+      ctx.font = '14px Arial';
+      ctx.textAlign = 'center';
+      for (const p of popups) {
+        ctx.globalAlpha = p.t / 60;
+        ctx.fillText(p.text, p.x + 8, p.y - p.t / 3);
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    } else if (paused) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(0, 0, 960, 540);
+      ctx.fillStyle = '#fff';
+      ctx.font = '32px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText("Paused", 480, 270);
+    }
+    if (resumeTimer > 0) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(0, 0, 960, 540);
+      ctx.fillStyle = '#fff';
+      ctx.font = '36px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(Math.ceil(resumeTimer / 20), 480, 270);
+      resumeTimer--;
+    }
+    ctx.textAlign = 'left';
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+  </script>
+</body>
+</html>
